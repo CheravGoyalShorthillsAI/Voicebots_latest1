@@ -120,19 +120,23 @@ async def process_with_llm(stt_text: str, file_path: str, streaming_callback: Ca
         full_response = ""
         count = 0
         local_tokens = ""
-        for chunk in llm.stream(input=prompt):
-            if first_token_time is None:
-                first_token_time = time.time()
-                print(f"[LLM] First token time: {first_token_time - start_time:.2f}s")
-            token = chunk.content
-            full_response += token
-            count += 1
-            local_tokens += token
-            if count % 10 == 0:
-                print(f"Local tokens: {local_tokens}")
-                audio_data = await get_audio(local_tokens)
-                await streaming_callback(local_tokens, count // 10, audio_data)
-                local_tokens = ""
+        try:
+            async for chunk in llm.astream(input=prompt):
+                if first_token_time is None:
+                    first_token_time = time.time()
+                    print(f"[LLM] First token time: {first_token_time - start_time:.2f}s")
+                token = chunk.content
+                full_response += token
+                count += 1
+                local_tokens += token
+                if count % 10 == 0:
+                    print(f"Local tokens: {local_tokens}")
+                    audio_data = await get_audio(local_tokens)
+                    await streaming_callback(local_tokens, count // 10, audio_data)
+                    local_tokens = ""
+        except asyncio.CancelledError:
+            print("🟢 LLM streaming cancelled")
+            raise
 
         # Send remaining tokens
         if local_tokens:
@@ -150,6 +154,9 @@ async def process_with_llm(stt_text: str, file_path: str, streaming_callback: Ca
 
         return ""
 
+    except asyncio.CancelledError:
+        print("🟢 LLM processing cancelled")
+        raise
     except Exception as e:
         print(f"LLM Error: {str(e)}")
         return f"LLM Error: {str(e)}"

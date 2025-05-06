@@ -33,6 +33,10 @@
         let processor;
         let websocket;
         let nextPlaybackTime = 0;
+        let currentSource = null; // Track current audio source
+        let isPlaying = false; // Track playback state
+        let analyser; // For detecting speech
+        let pendingSources = []; // Track all scheduled sources
 
         function updateStatus(text, isConnected) {
             const statusDiv = document.getElementById('status');
@@ -49,7 +53,11 @@
             const sourceNode = audioContext.createMediaStreamSource(mediaStream);
             processor = audioContext.createScriptProcessor(1024, 1, 1);
             
-            sourceNode.connect(processor);
+            // Set up analyser for speech detection
+            analyser = audioContext.createAnalyser();
+            analyser.fftSize = 2048;
+            sourceNode.connect(analyser);
+            analyser.connect(processor);
             processor.connect(audioContext.destination);
 
             return processor;
@@ -71,6 +79,28 @@
             return float32Array;
         }
 
+        function stopCurrentPlayback() {
+            // Stop all scheduled sources
+            pendingSources.forEach(source => {
+                try {
+                    source.stop();
+                } catch (e) {
+                    console.warn("Error stopping source:", e);
+                }
+            });
+            pendingSources = [];
+            if (currentSource) {
+                try {
+                    currentSource.stop();
+                } catch (e) {
+                    console.warn("Error stopping current source:", e);
+                }
+                currentSource = null;
+            }
+            isPlaying = false;
+            nextPlaybackTime = audioContext.currentTime;
+        }
+
         function schedulePlayback(audioData) {
             const float32Array = int16ToFloat32(new Int16Array(audioData));
             const buffer = audioContext.createBuffer(1, float32Array.length, audioContext.sampleRate);
@@ -89,6 +119,31 @@
 
             source.start(nextPlaybackTime);
             nextPlaybackTime += bufferDuration;
+            currentSource = source;
+            isPlaying = true;
+            pendingSources.push(source);
+
+            source.onended = () => {
+                pendingSources = pendingSources.filter(s => s !== source);
+                if (currentSource === source) {
+                    currentSource = null;
+                    isPlaying = pendingSources.length > 0;
+                }
+            };
+        }
+
+        function detectSpeech() {
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            analyser.getByteTimeDomainData(dataArray);
+
+            let sum = 0;
+            for (let i = 0; i < bufferLength; i++) {
+                const value = (dataArray[i] / 128) - 1; // Normalize to -1 to 1
+                sum += value * value;
+            }
+            const rms = Math.sqrt(sum / bufferLength);
+            return rms > 0.02; // Threshold for detecting speech
         }
 
         document.getElementById('startBtn').addEventListener('click', async () => {
@@ -132,6 +187,13 @@
                 if (websocket.readyState === WebSocket.OPEN) {
                     const audioData = event.inputBuffer.getChannelData(0);
                     const int16Data = float32ToInt16(audioData);
+
+                    // Check for speech during playback
+                    if (isPlaying && detectSpeech()) {
+                        stopCurrentPlayback();
+                        websocket.send(JSON.stringify({ type: 'interrupt' }));
+                    }
+
                     websocket.send(int16Data.buffer);
                 }
             };
@@ -141,6 +203,7 @@
             document.getElementById('startBtn').disabled = false;
             document.getElementById('stopBtn').disabled = true;
 
+            stopCurrentPlayback();
             if (websocket) websocket.close();
             if (mediaStream) mediaStream.getTracks().forEach(track => track.stop());
             if (audioContext) audioContext.close();

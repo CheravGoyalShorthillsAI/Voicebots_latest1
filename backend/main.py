@@ -1,5 +1,6 @@
 import asyncio
 import os
+import json
 from io import BytesIO
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -29,6 +30,8 @@ async def websocket_endpoint(websocket: WebSocket):
     connection_closed_once = False
     final_transcripts = []  # Accumulate transcripts until speech_final
     audio_queue = asyncio.Queue()  # Queue for audio chunks
+    llm_task = None  # Track LLM processing task
+    audio_task = None  # Track audio streaming task
 
     async def on_open(_, msg, **kwargs):
         print(f"🔵 Deepgram connection opened: {msg}")
@@ -40,6 +43,7 @@ async def websocket_endpoint(websocket: WebSocket):
             connection_closed_once = True
 
     async def on_transcript(_, result, **kwargs):
+        nonlocal llm_task, audio_task
         transcript = result.channel.alternatives[0].transcript
         if not transcript:
             return
@@ -69,6 +73,28 @@ async def websocket_endpoint(websocket: WebSocket):
                     except Exception as send_err:
                         print(f"❗ Error sending final transcript: {send_err}")
 
+                # Cancel any ongoing tasks
+                if llm_task and not llm_task.done():
+                    llm_task.cancel()
+                    try:
+                        await llm_task
+                    except asyncio.CancelledError:
+                        print("🟢 Previous LLM task cancelled")
+                if audio_task and not audio_task.done():
+                    audio_task.cancel()
+                    try:
+                        await audio_task
+                    except asyncio.CancelledError:
+                        print("🟢 Previous audio task cancelled")
+
+                # Clear audio queue
+                while not audio_queue.empty():
+                    try:
+                        audio_queue.get_nowait()
+                        audio_queue.task_done()
+                    except asyncio.QueueEmpty:
+                        break
+
                 # Process with LLM and stream audio
                 async def llm_callback(token: str, sequence: int, audio_data: bytes):
                     if token and websocket.client_state == WebSocketState.CONNECTED:
@@ -84,12 +110,20 @@ async def websocket_endpoint(websocket: WebSocket):
                         await audio_queue.put(audio_data)
 
                 try:
-                    await process_with_llm(
-                        stt_text=full_transcript,
-                        file_path="conversations.json",
-                        streaming_callback=llm_callback
+                    # Start new audio streaming task
+                    audio_task = asyncio.create_task(stream_audio())
+                    llm_task = asyncio.create_task(
+                        process_with_llm(
+                            stt_text=full_transcript,
+                            file_path="conversations.json",
+                            streaming_callback=llm_callback
+                        )
                     )
+                    await llm_task
                     final_transcripts.clear()  # Reset for next utterance
+                except asyncio.CancelledError:
+                    print("🟢 LLM task cancelled due to interruption")
+                    final_transcripts.clear()
                 except Exception as llm_err:
                     print(f"❗ LLM processing error: {llm_err}")
 
@@ -145,12 +179,42 @@ async def websocket_endpoint(websocket: WebSocket):
 
     try:
         await dg_connection.start(options)
-        # Start audio streaming task
+        # Start initial audio streaming task
         audio_task = asyncio.create_task(stream_audio())
 
         while True:
-            audio_chunk = await websocket.receive_bytes()
-            await dg_connection.send(audio_chunk)
+            data = await websocket.receive()
+            if 'text' in data:
+                message = json.loads(data['text'])
+                if message.get('type') == 'interrupt':
+                    print("🟢 Received interruption signal")
+                    # Cancel ongoing tasks
+                    if llm_task and not llm_task.done():
+                        llm_task.cancel()
+                        try:
+                            await llm_task
+                        except asyncio.CancelledError:
+                            print("🟢 LLM task cancelled due to interruption")
+                    if audio_task and not audio_task.done():
+                        audio_task.cancel()
+                        try:
+                            await audio_task
+                        except asyncio.CancelledError:
+                            print("🟢 Audio task cancelled due to interruption")
+                    # Clear audio queue
+                    while not audio_queue.empty():
+                        try:
+                            audio_queue.get_nowait()
+                            audio_queue.task_done()
+                        except asyncio.QueueEmpty:
+                            break
+                    final_transcripts.clear()
+                    # Start new audio streaming task
+                    audio_task = asyncio.create_task(stream_audio())
+                    continue
+            elif 'bytes' in data:
+                audio_chunk = data['bytes']
+                await dg_connection.send(audio_chunk)
 
     except WebSocketDisconnect:
         print("⚡ Client disconnected")
@@ -175,8 +239,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
         # Signal end of audio and cancel streaming task
         await audio_queue.put(None)
-        audio_task.cancel()
-        try:
-            await audio_task
-        except asyncio.CancelledError:
-            pass
+        if audio_task and not audio_task.done():
+            audio_task.cancel()
+            try:
+                await audio_task
+            except asyncio.CancelledError:
+                pass
