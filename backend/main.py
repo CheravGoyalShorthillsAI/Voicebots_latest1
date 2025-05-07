@@ -47,7 +47,39 @@ async def websocket_endpoint(websocket: WebSocket):
         transcript = result.channel.alternatives[0].transcript
         if not transcript:
             return
-
+        # Check if audio playback is active and transcript indicates speech
+        if audio_task and not audio_task.done() and result.is_final:
+            # Send pause_playback message to frontend
+            if websocket.client_state == WebSocketState.CONNECTED:
+                try:
+                    await websocket.send_text(
+                        '{"type": "pause_playback", "text": "User is speaking..."}'
+                    )
+                    print("🟢 Sent pause_playback signal")
+                    # Cancel ongoing tasks
+                    if llm_task and not llm_task.done():
+                        llm_task.cancel()
+                        try:
+                            await llm_task
+                        except asyncio.CancelledError:
+                            print("🟢 Previous LLM task cancelled")
+                    if audio_task and not audio_task.done():
+                        audio_task.cancel()
+                        try:
+                            await audio_task
+                        except asyncio.CancelledError:
+                            print("🟢 Previous audio task cancelled")
+                    # Clear audio queue
+                    while not audio_queue.empty():
+                        try:
+                            audio_queue.get_nowait()
+                            audio_queue.task_done()
+                        except asyncio.QueueEmpty:
+                            break
+                    # Start new audio streaming task
+                    audio_task = asyncio.create_task(stream_audio())
+                except Exception as send_err:
+                    print(f"❗ Error sending pause_playback: {send_err}")
         if result.is_final:
             final_transcripts.append(transcript)
             # Send interim transcript to client
