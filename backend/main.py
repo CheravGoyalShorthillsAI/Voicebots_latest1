@@ -24,10 +24,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="Voicebot Latest API",
     description="Advanced Real-time Speech Recognition and AI Response System",
-    version="1.2.0",
-    docs_url="/docs" if config.DEBUG else None,
-    redoc_url="/redoc" if config.DEBUG else None
-)
+    url="/redoc" if config.DEBUG else None
 
 # Add CORS middleware
 app.add_middleware(
@@ -80,7 +77,6 @@ class ConnectionManager:
             self.connection_data[client_id]["last_activity"] = datetime.now()
             self.connection_data[client_id]["messages_count"] += 1
 
-manager = ConnectionManager()
 
 @app.on_event("startup")
 async def startup_event():
