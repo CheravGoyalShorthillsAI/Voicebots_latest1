@@ -18,6 +18,7 @@ load_dotenv(override=True)
 
 # Configure logging
 logger = logging.getLogger(__name__)
+api_key="hvhvvchvcbhaaynuydbudvwydvwydvwdyvwd"
 
 @dataclass
 class TokenUsage:
@@ -188,16 +189,6 @@ class EnhancedLLMProcessor:
         
         asyncio.create_task(cleanup_task())
     
-    def _calculate_token_cost(self, token_usage: TokenUsage) -> float:
-        """Calculate estimated cost based on token usage (Azure OpenAI pricing)"""
-        # Example pricing - update with actual rates
-        prompt_cost_per_1k = 0.0015  # $0.0015 per 1k prompt tokens
-        completion_cost_per_1k = 0.002  # $0.002 per 1k completion tokens
-        
-        prompt_cost = (token_usage.prompt_tokens / 1000) * prompt_cost_per_1k
-        completion_cost = (token_usage.completion_tokens / 1000) * completion_cost_per_1k
-        
-        return prompt_cost + completion_cost
     
     def _extract_token_usage(self, response_metadata: Dict[str, Any]) -> TokenUsage:
         """Extract token usage from LLM response metadata"""
@@ -567,7 +558,6 @@ if __name__ == "__main__":
         # Test with sample input
         result = await processor.process_with_enhanced_features(
             stt_text="What is the capital of France?",
-            file_path="test_conversation.json",
             streaming_callback=example_callback,
             use_cache=True
         )
