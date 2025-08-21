@@ -430,14 +430,6 @@
             <div class="card conversation-area">
                 <div class="conversation-header">
                     <h3><i class="fas fa-comments"></i> Conversation</h3>
-                    <button id="exportBtn" class="export-btn">
-                        <i class="fas fa-download"></i> Export
-                    </button>
-                </div>
-                <div class="conversation-content" id="conversationContent">
-                    <div class="message message-assistant">
-                        <div>👋 Hi! I'm your AI voice assistant. Click "Start Recording" to begin our conversation!</div>
-                        <div class="message-timestamp">Ready to help</div>
                     </div>
                 </div>
             </div>
@@ -516,9 +508,7 @@
                     <i class="fas fa-wifi"></i> Test Connection
                 </button>
                 <button class="export-btn" onclick="downloadLogs()" style="background: var(--primary-color);">
-                    <i class="fas fa-file-download"></i> Download Logs
-                </button>
-            </div>
+             
         </div>
     </div>
 
@@ -552,12 +542,7 @@
                     clientId: document.getElementById('clientId'),
                     conversationContent: document.getElementById('conversationContent'),
                     exportBtn: document.getElementById('exportBtn'),
-                    clientIdInput: document.getElementById('clientIdInput'),
-                    messageCountEl: document.getElementById('messageCount'),
-                    sessionTimeEl: document.getElementById('sessionTime'),
-                    connectionStatusEl: document.getElementById('connectionStatus'),
-                    audioLevelEl: document.getElementById('audioLevel'),
-                };
+              
 
                 // Event listeners
                 this.elements.startBtn.addEventListener('click', () => this.startRecording());
